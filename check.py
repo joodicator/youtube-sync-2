@@ -26,7 +26,7 @@ arg_parser = argparse.ArgumentParser(
         'accounting of the archival status of all playlist entries and files.',
     parents = [sync.base_arg_parser])
 arg_parser.add_argument(
-    '--refresh', choices=('none', 'playlists', 'all'), default='none',
+    '--refresh', choices=('none', 'playlists', 'all'), default='playlists',
     help='bypass the local playlist and/or video metadata cache')
 
 def load_cache():
@@ -72,7 +72,7 @@ def init(ydl, playlists, files, login, args):
     ie = None
     for file in list(u_files):
         match = re.search(
-            r'[-_\.](ex:)?(?P<video_id>[\w-]{11})(\.[^\.]*)?$', file)
+            r'\.(ex[:\.])?(?P<video_id>[\w-]{11})(\.[a-zA-Z0-9]+)?$', file)
         if not match: continue
         video_id = match.group('video_id')
         if ie is None: ie = YoutubeIE(ydl)
@@ -80,36 +80,36 @@ def init(ydl, playlists, files, login, args):
         u_files.remove(file)
         (bu_files if video_is_bad(video) else gu_files).append((file, video))
 
-    print('\n=== %d matching videos: ===' % len(m_videos), file=sys.stderr)
+    print('\n=== %d listed video(s) online and archived: ===' % len(m_videos), file=sys.stderr)
     for video, files in m_videos:
         print_video_files(video, files)
 
-    print('\n=== %d matching unavailable videos: ===' % len(bm_videos), file=sys.stderr)
+    print('\n=== %d listed video(s) not online but archived: ===' % len(bm_videos), file=sys.stderr)
     for video, files in bm_videos:
         print_video_files(video, files)
 
-    print('\n=== %d matching unavailable unlisted videos: ===' % len(bu_files), file=sys.stderr)
+    print('\n=== %d unlisted video(s) not online but archived: ===' % len(bu_files), file=sys.stderr)
     for file, video in bu_files:
         print_video_files(video, [file])
 
-    print('\n=== %d matching unlisted videos: ===' % len(gu_files), file=sys.stderr)
+    print('\n=== %d unlisted video(s) online and archived: ===' % len(gu_files), file=sys.stderr)
     for file, video in gu_files:
         print_video_files(video, [file])
 
-    print('\n=== %d unmatched videos: ===' % len(u_videos), file=sys.stderr)
+    print('\n=== %d listed video(s) online but not archived: ===' % len(u_videos), file=sys.stderr)
     for video in u_videos:
         print_video(video)
 
-    print('\n=== %d unmatched unavailable videos ===' % len(bu_videos), file=sys.stderr)
+    print('\n=== %d listed video(s) not online and not archived: ===' % len(bu_videos), file=sys.stderr)
     for video in bu_videos:
         print_video(video)
 
     d_videos = [(v,fs) for (v,fs) in bm_videos + m_videos if len(fs) > 1]
-    print('\n=== %d videos with duplicate files: ===' % len(d_videos), file=sys.stderr)
+    print('\n=== %d video(s) with multiple matching files: ===' % len(d_videos), file=sys.stderr)
     for video, files in d_videos:
         print_video_files(video, files)
 
-    print('\n=== %d unmatched files: ===' % len(u_files), file=sys.stderr)
+    print('\n=== %d file(s) not matching any video: ===' % len(u_files), file=sys.stderr)
     for file in u_files:
         print_file(file)
 
@@ -124,10 +124,10 @@ def print_video_files(video, files):
         print_rename_file(file, video)
 
 def print_rename_file(file, video):
-    vid = '.%s%s' % ('ex:' if video_is_bad(video) else '', video['id'])
+    vid = '.%s%s' % ('ex.' if video_is_bad(video) else '', video['id'])
     if video['id'] in file:
         new_file = re.sub(
-            r'[-_\.]?(?:ex:)?%s' % re.escape(video['id']), vid, file)
+            r'[-_\.](?:ex[:\.])?%s' % re.escape(video['id']), vid, file)
     else:
         new_file = re.sub(r'((?:\.[^\.]*)?)$', r'%s\1' % vid, file)
     if new_file != file:

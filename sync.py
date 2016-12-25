@@ -27,6 +27,9 @@ base_arg_parser.add_argument(
     '--need-regions', metavar='RC[,RC[...]]', dest='need_regions', default='',
     help='comma-separated list of required region codes.')
 base_arg_parser.add_argument(
+    '--exclude-file', metavar='PATH', dest='exclude_files', action='append',
+    help='file or directory to exclude from the search for existing videos.')
+base_arg_parser.add_argument(
     'playlists', nargs='+', metavar='PLAYLIST',
     help='URL of a playlist whose videos are to be archived')
 
@@ -59,15 +62,19 @@ def main(args, ydl_params=None, cont=tuple):
         ydl_params['username'], ydl_params['password'] = login
     ydl = YoutubeDL(ydl_params)
 
-    files = list(scandir_r())
+    exclude_re = re.compile('(%s)$' % '|'.join(
+        r'(%s)(/.*)?' % re.escape(os.path.normpath(file))
+        for file in args.exclude_files))
+    files = [
+        f for f in scandir_r()
+        if not exclude_re.match(os.path.normpath(f.path))]
     return cont(ydl, args.playlists, files, login, args)
 
 def sync(ydl, playlists, files, login, args):
     dl_videos = []
     for video in iter_videos(ydl, playlists, args):
-        if not any(match_file_video(file, video) for file in files):
+        if not any(match_file_video(f, video) for f in files):
             dl_videos.append(video)
-
     if not dl_videos:
         print('\nNo videos to download.', file=sys.stderr)
         return
@@ -89,7 +96,8 @@ def sync(ydl, playlists, files, login, args):
         files = list(scandir_r())
         failed_videos = []
         for video in dl_videos:
-            if not any(match_file_video(file, video) for file in files):
+            v_files = [f for f in files if match_file_video(f, video)]
+            if not v_files or any(file_is_incomplete(f, video) for f in v_files):
                 failed_videos.append(video)
     
         if failed_videos:
@@ -102,7 +110,11 @@ def sync(ydl, playlists, files, login, args):
                 % len(dl_videos), file=sys.stderr)
 
 def match_file_video(file, video):
-    match = re.search(r'(^|[\.:_-])%s(\.|$)' % re.escape(video['id']), file.name)
+    match = re.search(r'(^|\.)%s(\.|$)' % re.escape(video['id']), file.name)
+    return match is not None
+
+def file_is_incomplete(file, video):
+    match = re.search(r'%s\.f\d+\.' % re.escape(video['id']), file.name)
     return match is not None
 
 def iter_videos(ydl, playlists, args, exclude_bad=True):
@@ -164,7 +176,7 @@ def postproc_video(video, args):
     return video
 
 def video_is_bad(video):
-    return video['title'] in ('[Deleted Video]', '[Private Video]') \
+    return re.match(r'\[(Deleted|Private) video\]$', video['title'], flags=re.I) \
         or video.get('_bad', False)
 
 def print_video(video):
