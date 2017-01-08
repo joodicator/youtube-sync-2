@@ -3,20 +3,13 @@
 import sys
 import re
 import os
-import pickle
 import argparse
 
 from youtube_dl.extractor.youtube import YoutubeIE
 from youtube_dl.utils import ExtractorError
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from sync import video_is_bad
-from sync import print_video
-from sync import postproc_video
 import sync
-
-CACHE_FILE = '.youtube-sync-cache'
-cache = None
 
 #===============================================================================
 arg_parser = argparse.ArgumentParser(
@@ -29,35 +22,20 @@ arg_parser.add_argument(
     '--refresh', choices=('none', 'playlists', 'all'), default='playlists',
     help='bypass the local playlist and/or video metadata cache')
 
-def load_cache():
-    global cache
-    if os.path.exists(CACHE_FILE):
-        with open(CACHE_FILE, 'rb') as file:
-            cache = pickle.load(file)
-    else:
-        cache = {}
-load_cache()
-
-def save_cache():
-    with open(CACHE_FILE, 'wb') as file:
-        pickle.dump(cache, file)
-
 def main(args, cont):
     ydl_params = { 'logtostderr': True }
-    try:
-        sync.main(args, ydl_params=ydl_params, cont=cont)
-    finally:
-        save_cache()
+    sync.main(args, ydl_params=ydl_params, cont=cont)
 
-def init(ydl, playlists, files, login, args):
+def init(ydl, playlists, files, login, cache, args):
     u_files, gu_files, bu_files = [file.path for file in files], [], []
     m_videos, u_videos, bm_videos, bu_videos = [], [], [], []
 
     fresh_p = args.refresh in ('all', 'playlists')
     fresh_v = args.refresh in ('all',)
 
-    for video in iter_videos(ydl, playlists, args, refresh=fresh_p, exclude_bad=False):
-        bad = video_is_bad(video)
+    for video in sync.iter_videos(
+    ydl, playlists, cache, args, refresh=fresh_p, exclude_bad=False):
+        bad = sync.video_is_bad(video)
         matching_files = []
         for file in files:
             if match_file_video(file.name, video):
@@ -76,9 +54,9 @@ def init(ydl, playlists, files, login, args):
         if not match: continue
         video_id = match.group('video_id')
         if ie is None: ie = YoutubeIE(ydl)
-        video = video_by_id(ydl, video_id, args, refresh=fresh_v, ie=ie)
+        video = video_by_id(ydl, video_id, cache, args, refresh=fresh_v, ie=ie)
         u_files.remove(file)
-        (bu_files if video_is_bad(video) else gu_files).append((file, video))
+        (bu_files if sync.video_is_bad(video) else gu_files).append((file, video))
 
     print('\n=== %d listed video(s) online and archived: ===' % len(m_videos), file=sys.stderr)
     for video, files in m_videos:
@@ -98,11 +76,11 @@ def init(ydl, playlists, files, login, args):
 
     print('\n=== %d listed video(s) online but not archived: ===' % len(u_videos), file=sys.stderr)
     for video in u_videos:
-        print_video(video)
+        sync.print_video(video)
 
     print('\n=== %d listed video(s) not online and not archived: ===' % len(bu_videos), file=sys.stderr)
     for video in bu_videos:
-        print_video(video)
+        sync.print_video(video)
 
     d_videos = [(v,fs) for (v,fs) in bm_videos + m_videos if len(fs) > 1]
     print('\n=== %d video(s) with multiple matching files: ===' % len(d_videos), file=sys.stderr)
@@ -118,13 +96,13 @@ def print_file(file):
 
 def print_video_files(video, files):
     print(file=sys.stderr)
-    print_video(video)
+    sync.print_video(video)
     for file in files:
         print_file(file)
         print_rename_file(file, video)
 
 def print_rename_file(file, video):
-    vid = '.%s%s' % ('ex.' if video_is_bad(video) else '', video['id'])
+    vid = '.%s%s' % ('ex.' if sync.video_is_bad(video) else '', video['id'])
     if video['id'] in file:
         new_file = re.sub(
             r'[-_\.](?:ex[:\.])?%s' % re.escape(video['id']), vid, file)
@@ -135,19 +113,7 @@ def print_rename_file(file, video):
         print('   %s' % shesc(new_file))
         print()
 
-def iter_videos(ydl, playlists, args, refresh=False, **kwds):
-    if not refresh and tuple(playlists) in cache:
-        videos = cache[tuple(playlists)]
-    else:
-        videos = sync.iter_videos(ydl, playlists, args, **kwds)
-    new_videos = []
-    for video in videos:
-        video = postproc_video(video, args)
-        yield video
-        new_videos.append(video)
-    cache[tuple(playlists)] = new_videos
-
-def video_by_id(ydl, video_id, args, refresh=False, ie=None):
+def video_by_id(ydl, video_id, cache, args, refresh=False, ie=None):
     video_url = 'https://youtube.com/watch?v=%s' % video_id
     if not refresh and video_url in cache:
         video = cache[video_url]
@@ -157,13 +123,13 @@ def video_by_id(ydl, video_id, args, refresh=False, ie=None):
             video = ie.extract(video_url)
         except ExtractorError as e:
             video = {'id':video_id, 'title':repr(e), '_bad':True}
-    video = postproc_video(video, args)
+    video = sync.postproc_video(video, args)
     cache[video_url] = video
     return video
 
 def match_file_video(name, video):
     if video['id'] in name: return True
-    if video_is_bad(video): return False
+    if sync.video_is_bad(video): return False
     rname = re.findall(r'\w+', re.sub(r'\.[^\.]+$', '', name.lower()))
     rtitle = re.findall(r'\w+', video['title'].lower())
     return ''.join(rname) == ''.join(rtitle)

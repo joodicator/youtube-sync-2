@@ -7,13 +7,28 @@ import os
 import re
 import argparse
 import getpass
+import pickle
 
 import youtube_dl.options
 from youtube_dl import YoutubeDL
 from youtube_dl.extractor.youtube import YoutubePlaylistIE
 
 import ytdata
+
+CACHE_FILE = '.youtube-sync-cache'
 ytservice = ytdata.build_service()
+
+#===============================================================================
+def load_cache():
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE, 'rb') as file:
+            return pickle.load(file)
+    else:
+        return {}
+
+def save_cache(cache):
+    with open(CACHE_FILE, 'wb') as file:
+        pickle.dump(cache, file)
 
 #===============================================================================
 base_arg_parser = argparse.ArgumentParser(add_help=False)
@@ -39,6 +54,9 @@ arg_parser = argparse.ArgumentParser(
         'Archived video filenames must end with the video ID, optionally '
         'followed by a file extension. Newly downloaded videos are placed new/.',
     parents = [base_arg_parser])
+arg_parser.add_argument(
+    '--refresh', choices=('none', 'playlists'), default='playlists',
+    help='control usage of the local playlist cache')
 arg_parser.add_argument(
     'ydl_args', nargs=argparse.REMAINDER, metavar='...',
     help='arguments to be passed to youtube-dl')
@@ -68,11 +86,17 @@ def main(args, ydl_params=None, cont=tuple):
     files = [
         f for f in scandir_r()
         if not exclude_re.match(os.path.normpath(f.path))]
-    return cont(ydl, args.playlists, files, login, args)
+   
+    cache = load_cache()
+    result = cont(ydl, args.playlists, files, login, cache, args)
+    save_cache(cache)
 
-def sync(ydl, playlists, files, login, args):
+    return result
+
+def sync(ydl, playlists, files, login, cache, args):
     dl_videos = []
-    for video in iter_videos(ydl, playlists, args):
+    fresh_p = args.refresh != 'none'
+    for video in iter_videos(ydl, playlists, cache, args, refresh=fresh_p):
         if not any(match_file_video(f, video) for f in files):
             dl_videos.append(video)
     if not dl_videos:
@@ -81,7 +105,7 @@ def sync(ydl, playlists, files, login, args):
 
     print('Downloading %d videos.' % len(dl_videos))
     argv = []
-    if login is not None:
+    if login is not None and login[1] != '':
         argv += ['--username', login[0]]
         argv += ['--password', login[1]]
     argv += ['--output', 'new/%(title)s.%(id)s.%(ext)s']
@@ -117,27 +141,43 @@ def file_is_incomplete(file, video):
     match = re.search(r'%s\.f\d+\.' % re.escape(video['id']), file.name)
     return match is not None
 
-def iter_videos(ydl, playlists, args, exclude_bad=True):
-    seen = set()
-    playlist_ie = YoutubePlaylistIE(ydl)
-    for url in playlists:
-        playlist = playlist_ie.extract(url)
-        assert playlist['_type'] == 'playlist'
-
-        playlist_info = dict(playlist)
-        del playlist_info['entries']
-
-        for video, index in zip(playlist['entries'], count()):
-            assert video['_type'] == 'url'
-            if exclude_bad and video_is_bad(video): continue
-            if video['id'] in seen: continue
-
+def iter_videos(ydl, playlists, cache, args, refresh=False, **kwds):
+    memo, seen = dict(), set()
+    for playlist_url in playlists:
+        if not refresh and playlist_url in cache:
+            videos = cache[playlist_url]
+        else:
+            videos = _iter_videos(ydl, playlist_url, args, memo, **kwds)
+        new_videos = []
+        for video in videos:
             video = postproc_video(video, args)
-            video['_playlist'] = playlist_info
-            video['_index'] = index
+            if video['id'] not in seen:
+                seen.add(video['id'])
+                yield video
+            new_videos.append(video)
+        cache[playlist_url] = new_videos
 
-            seen.add(video['id'])
-            yield video
+def _iter_videos(ydl, playlist_url, args, memo=None, exclude_bad=True):
+    playlist_ie = YoutubePlaylistIE(ydl)
+    playlist = playlist_ie.extract(playlist_url)
+    assert playlist['_type'] == 'playlist'
+
+    playlist_info = dict(playlist)
+    del playlist_info['entries']
+
+    for video, index in zip(playlist['entries'], count()):
+        assert video['_type'] == 'url'
+        if memo is not None and video['id'] in memo:
+            video = dict(memo[video['id']])
+        elif exclude_bad and video_is_bad(video):
+            continue
+        else:
+            video = postproc_video(video, args)
+            if memo is not None:
+                memo[video['id']] = video
+        video['_playlist'] = playlist_info
+        video['_index'] = index
+        yield video
 
 def postproc_video(video, args):
     if video.get('_postproc', 0) >= 5: return video
