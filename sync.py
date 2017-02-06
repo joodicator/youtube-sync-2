@@ -89,7 +89,6 @@ def main(args, ydl_params=None, cont=tuple):
    
     cache = load_cache()
     result = cont(ydl, args.playlists, files, login, cache, args)
-    save_cache(cache)
 
     return result
 
@@ -102,6 +101,8 @@ def sync(ydl, playlists, files, login, cache, args):
     if not dl_videos:
         print('\nNo videos to download.', file=sys.stderr)
         return
+
+    save_cache(cache)
 
     print('Downloading %d videos.' % len(dl_videos))
     argv = []

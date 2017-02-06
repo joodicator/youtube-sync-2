@@ -47,6 +47,8 @@ def init(ydl, playlists, files, login, cache, args):
         else:
             (bu_videos if bad else u_videos).append(video)
 
+    sync.save_cache(cache)
+
     ie = None
     for file in list(u_files):
         match = re.search(
