@@ -47,8 +47,6 @@ def init(ydl, playlists, files, login, cache, args):
         else:
             (bu_videos if bad else u_videos).append(video)
 
-    sync.save_cache(cache)
-
     ie = None
     for file in list(u_files):
         match = re.search(
@@ -59,6 +57,8 @@ def init(ydl, playlists, files, login, cache, args):
         video = video_by_id(ydl, video_id, cache, args, refresh=fresh_v, ie=ie)
         u_files.remove(file)
         (bu_files if sync.video_is_bad(video) else gu_files).append((file, video))
+
+    sync.save_cache(cache)
 
     print('\n=== %d listed video(s) online and archived: ===' % len(m_videos), file=sys.stderr)
     for video, files in m_videos:
