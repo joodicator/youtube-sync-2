@@ -76,7 +76,7 @@ def main(args, ydl_params=None, cont=tuple):
 
     if ydl_params is None:
         ydl_params = {}
-    if login is not None:
+    if login is not None and login[1] != '':
         ydl_params['username'], ydl_params['password'] = login
     ydl = YoutubeDL(ydl_params)
 
